@@ -2,37 +2,44 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>URL Signer</title>
+    <title>URL Signer & Verifier</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
       body {
         font-family: Arial, Helvetica, sans-serif;
         margin: 2rem auto;
-        max-width: 640px;
-        line-height: 1.5;
+        max-width: 720px;
+        line-height: 1.6;
       }
       h1 {
-        font-size: 1.75rem;
-        margin-bottom: 1rem;
+        font-size: 1.9rem;
+        margin-bottom: 0.5rem;
+      }
+      h2 {
+        margin-top: 2rem;
+        font-size: 1.4rem;
       }
       label {
+        font-weight: 600;
         display: block;
         margin-top: 1rem;
-        font-weight: 600;
       }
-      input[type="text"],
+      input[type='text'],
       textarea {
         width: 100%;
-        padding: 0.5rem;
+        padding: 0.55rem 0.6rem;
         font-size: 1rem;
-        border: 1px solid #ccc;
+        border: 1px solid #bbb;
         border-radius: 4px;
         box-sizing: border-box;
         resize: vertical;
       }
+      textarea[readonly] {
+        background: #f7f7f7;
+      }
       button {
         margin-top: 1rem;
-        padding: 0.6rem 1.2rem;
+        padding: 0.6rem 1.4rem;
         font-size: 1rem;
         border: none;
         border-radius: 4px;
@@ -43,95 +50,247 @@
       button:hover {
         background: #0056b3;
       }
+      .status {
+        margin-top: 0.6rem;
+        font-weight: 600;
+      }
+      .valid {
+        color: #0a7b13;
+      }
+      .invalid {
+        color: #c62828;
+      }
       footer {
-        margin-top: 2rem;
-        font-size: 0.85rem;
+        margin-top: 2.5rem;
+        font-size: 0.82rem;
         color: #666;
       }
     </style>
   </head>
   <body>
-    <h1>URL Signer</h1>
+    <h1>URL Signer & Verifier</h1>
     <p>
-      Paste a link below and click <strong>Sign URL</strong>. The app will append a
-      tamper‑proof <code>sig</code> query parameter generated with an
-      HMAC‑SHA‑256 signature.
+      This demo lets you <strong>sign</strong> links with an ECDSA-P256 private
+      key and <strong>verify</strong> signed links with the corresponding public
+      key.
     </p>
 
-    <label for="urlInput">URL to sign</label>
+    <!-- ─────── SIGN SECTION ────────────────────────────────────────────── -->
+    <h2>Sign URL</h2>
+    <p style="margin-top: 0">
+      Paste a private-key JWK and the URL you want to sign.
+    </p>
+
+    <label for="privKey">Private JWK (<code>{ d, x, y }</code>)</label>
+    <textarea
+      id="privKey"
+      rows="6"
+      placeholder='{"kty":"EC","crv":"P-256","x":"…","y":"…","d":"…"}'
+    ></textarea>
+
+    <label for="urlToSign">URL to sign</label>
     <input
-      id="urlInput"
+      id="urlToSign"
       type="text"
-      placeholder="https://example.com/path?foo=bar" />
+      placeholder="https://example.com/?foo=bar"
+    />
 
-    <button id="signBtn">Sign URL</button>
+    <button id="signBtn">Sign URL</button>
 
-    <label for="output">Signed URL</label>
-    <textarea id="output" rows="4" readonly></textarea>
+    <label for="signedOutput">Signed URL</label>
+    <textarea id="signedOutput" rows="4" readonly></textarea>
+
+    <!-- ─────── VERIFY SECTION ──────────────────────────────────────────── -->
+    <h2>Verify URL</h2>
+    <p style="margin-top: 0">
+      Checks the <code>sig</code> parameter using the public JWK below.
+    </p>
+
+    <label for="urlToVerify">Signed URL</label>
+    <input
+      id="urlToVerify"
+      type="text"
+      placeholder="https://example.com/?foo=bar&sig=…"
+    />
+
+    <label for="pubKey">Public JWK</label>
+    <textarea id="pubKey" rows="5"></textarea>
+
+    <button id="verifyBtn">Verify URL</button>
+    <div id="verifyStatus" class="status"></div>
 
     <footer>
-      This is a demo. The secret key used here is not a secret.
+      <p>
+        Keys are handled entirely in-browser via the Web Crypto API. Nothing is
+        sent over the network.
+      </p>
+      <p>
+        We can use GitHub pages, with their built-in repo-access authentication,
+        to restrict access to this page. However, we might want to consider only
+        doing this on the server side so employees with access to this page
+        can't steal the private key.
+      </p>
+      <p>
+        idea: It is easy to spin up a CloudFlare Worker for this, but adding in
+        SSO authentication might be difficult. They have a page on it here:
+        <a
+          href="https://developers.cloudflare.com/cloudflare-one/tutorials/extend-sso-with-workers/"
+          >Send SSO attributes to Access-protected origins with Workers</a
+        >
+      </p>
     </footer>
 
     <script>
-      // ─── CONFIG ────────────────────────────────────────────────────────────
-      // Replace this with your own secret. KEEP IT SAFE in production!
-      const SECRET = {"crv":"P-256","d":"lRYWpacfdbJQ7YY2nxvVE4W6jxQaYOCEF2gh_M7Biyg","ext":true,"key_ops":["sign"],"kty":"EC","x":"Bhp73TQ0keNmZWmdPlT7U3dbqbvZRdywIe5RpVFwIuk","y":"4BFtBenx-ZjECrt6YUNRk4isSBTAFMn_21vDiFgI7h8"};
+      /* ─────── CONSTANTS ─────────────────────────────────────────────── */
+      // Default private key (verify‑only) – replace with your own as needed.
+      const DEFAULT_PRIVATE_JWK = {
+        crv: 'P-256',
+        d: 'lRYWpacfdbJQ7YY2nxvVE4W6jxQaYOCEF2gh_M7Biyg',
+        ext: true,
+        key_ops: ['sign'],
+        kty: 'EC',
+        x: 'Bhp73TQ0keNmZWmdPlT7U3dbqbvZRdywIe5RpVFwIuk',
+        y: '4BFtBenx-ZjECrt6YUNRk4isSBTAFMn_21vDiFgI7h8',
+      };
+      // Default public key (verify‑only) – replace with your own as needed.
+      const DEFAULT_PUBLIC_JWK = {
+        crv: 'P-256',
+        ext: true,
+        key_ops: ['verify'],
+        kty: 'EC',
+        x: 'Bhp73TQ0keNmZWmdPlT7U3dbqbvZRdywIe5RpVFwIuk',
+        y: '4BFtBenx-ZjECrt6YUNRk4isSBTAFMn_21vDiFgI7h8',
+      };
+      // Put default private key in textarea on load
+      document.getElementById('privKey').value = JSON.stringify(
+        DEFAULT_PRIVATE_JWK,
+        null,
+        2,
+      );
 
-      // ─── UTILITY FUNCTIONS ────────────────────────────────────────────────
-      /** Convert ArrayBuffer → Base64‑URL (no padding) */
-      function base64url(aBuf) {
-        const b64 = btoa(String.fromCharCode(...new Uint8Array(aBuf)));
-        return b64.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+      // Put default public key in textarea on load
+      document.getElementById('pubKey').value = JSON.stringify(
+        DEFAULT_PUBLIC_JWK,
+        null,
+        2,
+      );
+
+      /* ─────── HELPERS ───────────────────────────────────────────────── */
+      const enc = new TextEncoder();
+
+      function bytesToB64url(buf) {
+        const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        return b64.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
       }
 
-      /** Canonicalize URL: origin + path + sorted query string (except sig) */
+      function b64urlToBytes(str) {
+        const pad =
+          str.length % 4 === 2 ? '==' : str.length % 4 === 3 ? '=' : '';
+        const b64 = str.replace(/-/g, '+').replace(/_/g, '/') + pad;
+        const bin = atob(b64);
+        return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+      }
+
       function canonicalize(rawUrl) {
         const u = new URL(rawUrl);
-        u.searchParams.delete("sig"); // ignore existing sig
-        // sort params
-        const sorted = [...u.searchParams.entries()].sort(([a], [b]) =>
-          a.localeCompare(b)
-        );
-        const query = sorted
+        u.searchParams.delete('sig');
+        const sorted = [...u.searchParams.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
           .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-          .join("&");
-        return u.origin + u.pathname + (query ? `?${query}` : "");
+          .join('&');
+        return u.origin + u.pathname + (sorted ? `?${sorted}` : '');
       }
 
-      /** Create HMAC‑SHA‑256 signature of a string using SECRET */
-      async function sign(str) {
-        const enc = new TextEncoder();
-        const key = await crypto.subtle.importKey(
-          "jwk",
-          SECRET,
-          { name: "ECDSA", namedCurve: "P-256" },
-          false,
-          ["sign"]
-        );
-        const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(str));
-        return base64url(sigBuf);
-      }
-
-      // ─── MAIN WORKFLOW ─────────────────────────────────────────────────────
-      document.getElementById("signBtn").addEventListener("click", async () => {
-        const input = document.getElementById("urlInput").value.trim();
-        if (!input) return alert("Please enter a URL first");
-
+      /* ─────── SIGN LOGIC ────────────────────────────────────────────── */
+      document.getElementById('signBtn').addEventListener('click', async () => {
+        const keyText = document.getElementById('privKey').value.trim();
+        const urlText = document.getElementById('urlToSign').value.trim();
+        if (!keyText || !urlText) {
+          alert('Please paste a private key and a URL to sign.');
+          return;
+        }
+        let jwk;
         try {
-          const canonical = canonicalize(input);
-          const sig = await sign(canonical);
-
-          // Build the final URL (keep original order, then append sig)
+          jwk = JSON.parse(keyText);
+        } catch (e) {
+          alert('Private key is not valid JSON');
+          return;
+        }
+        try {
+          const privateKey = await crypto.subtle.importKey(
+            'jwk',
+            jwk,
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            false,
+            ['sign'],
+          );
+          const canonical = canonicalize(urlText);
+          const sigBuf = await crypto.subtle.sign(
+            { name: 'ECDSA', hash: 'SHA-256' },
+            privateKey,
+            enc.encode(canonical),
+          );
+          const sig = bytesToB64url(sigBuf);
           const u = new URL(canonical);
-          u.searchParams.append("sig", sig);
-
-          document.getElementById("output").value = u.toString();
+          u.searchParams.append('sig', sig);
+          document.getElementById('signedOutput').value = u.toString();
         } catch (err) {
           console.error(err);
-          alert("Invalid URL or unexpected error.");
+          alert(
+            'Failed to sign – check that the key is a valid P‑256 private JWK.',
+          );
         }
       });
+
+      /* ─────── VERIFY LOGIC ──────────────────────────────────────────── */
+      document
+        .getElementById('verifyBtn')
+        .addEventListener('click', async () => {
+          const urlText = document.getElementById('urlToVerify').value.trim();
+          const pubText = document.getElementById('pubKey').value.trim();
+          const statusEl = document.getElementById('verifyStatus');
+          statusEl.textContent = '';
+          statusEl.className = 'status';
+
+          if (!urlText || !pubText) {
+            alert('Please provide both a signed URL and a public JWK.');
+            return;
+          }
+          let pubJwk;
+          try {
+            pubJwk = JSON.parse(pubText);
+          } catch (e) {
+            alert('Public key is not valid JSON');
+            return;
+          }
+          try {
+            const pubKey = await crypto.subtle.importKey(
+              'jwk',
+              pubJwk,
+              { name: 'ECDSA', namedCurve: 'P-256' },
+              false,
+              ['verify'],
+            );
+            const urlObj = new URL(urlText);
+            const sigB64 = urlObj.searchParams.get('sig');
+            if (!sigB64) throw new Error('Missing sig param');
+            const canonical = canonicalize(urlText);
+            const ok = await crypto.subtle.verify(
+              { name: 'ECDSA', hash: 'SHA-256' },
+              pubKey,
+              b64urlToBytes(sigB64),
+              enc.encode(canonical),
+            );
+            statusEl.textContent = ok
+              ? '✔ Signature valid'
+              : '✖ Signature invalid';
+            statusEl.classList.add(ok ? 'valid' : 'invalid');
+          } catch (err) {
+            console.error(err);
+            statusEl.textContent = '✖ Verification failed: ' + err.message;
+            statusEl.classList.add('invalid');
+          }
+        });
     </script>
   </body>
 </html>
