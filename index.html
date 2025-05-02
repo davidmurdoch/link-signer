@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>URL Signer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 2rem auto;
+        max-width: 640px;
+        line-height: 1.5;
+      }
+      h1 {
+        font-size: 1.75rem;
+        margin-bottom: 1rem;
+      }
+      label {
+        display: block;
+        margin-top: 1rem;
+        font-weight: 600;
+      }
+      input[type="text"],
+      textarea {
+        width: 100%;
+        padding: 0.5rem;
+        font-size: 1rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+        resize: vertical;
+      }
+      button {
+        margin-top: 1rem;
+        padding: 0.6rem 1.2rem;
+        font-size: 1rem;
+        border: none;
+        border-radius: 4px;
+        background: #007bff;
+        color: #fff;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      footer {
+        margin-top: 2rem;
+        font-size: 0.85rem;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>URL Signer</h1>
+    <p>
+      Paste a link below and click <strong>Sign URL</strong>. The app will append a
+      tamper‑proof <code>sig</code> query parameter generated with an
+      HMAC‑SHA‑256 signature.
+    </p>
+
+    <label for="urlInput">URL to sign</label>
+    <input
+      id="urlInput"
+      type="text"
+      placeholder="https://example.com/path?foo=bar" />
+
+    <button id="signBtn">Sign URL</button>
+
+    <label for="output">Signed URL</label>
+    <textarea id="output" rows="4" readonly></textarea>
+
+    <footer>
+      This is a demo. The secret key used here is not a secret.
+    </footer>
+
+    <script>
+      // ─── CONFIG ────────────────────────────────────────────────────────────
+      // Replace this with your own secret. KEEP IT SAFE in production!
+      const SECRET = {"crv":"P-256","d":"lRYWpacfdbJQ7YY2nxvVE4W6jxQaYOCEF2gh_M7Biyg","ext":true,"key_ops":["sign"],"kty":"EC","x":"Bhp73TQ0keNmZWmdPlT7U3dbqbvZRdywIe5RpVFwIuk","y":"4BFtBenx-ZjECrt6YUNRk4isSBTAFMn_21vDiFgI7h8"};
+
+      // ─── UTILITY FUNCTIONS ────────────────────────────────────────────────
+      /** Convert ArrayBuffer → Base64‑URL (no padding) */
+      function base64url(aBuf) {
+        const b64 = btoa(String.fromCharCode(...new Uint8Array(aBuf)));
+        return b64.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+      }
+
+      /** Canonicalize URL: origin + path + sorted query string (except sig) */
+      function canonicalize(rawUrl) {
+        const u = new URL(rawUrl);
+        u.searchParams.delete("sig"); // ignore existing sig
+        // sort params
+        const sorted = [...u.searchParams.entries()].sort(([a], [b]) =>
+          a.localeCompare(b)
+        );
+        const query = sorted
+          .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+          .join("&");
+        return u.origin + u.pathname + (query ? `?${query}` : "");
+      }
+
+      /** Create HMAC‑SHA‑256 signature of a string using SECRET */
+      async function sign(str) {
+        const enc = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+          "jwk",
+          enc.encode(SECRET),
+          { name: "ECDSA", hash: "P-256" },
+          false,
+          ["sign"]
+        );
+        const sigBuf = await crypto.subtle.sign("HMAC", key, enc.encode(str));
+        return base64url(sigBuf);
+      }
+
+      // ─── MAIN WORKFLOW ─────────────────────────────────────────────────────
+      document.getElementById("signBtn").addEventListener("click", async () => {
+        const input = document.getElementById("urlInput").value.trim();
+        if (!input) return alert("Please enter a URL first");
+
+        try {
+          const canonical = canonicalize(input);
+          const sig = await sign(canonical);
+
+          // Build the final URL (keep original order, then append sig)
+          const u = new URL(canonical);
+          u.searchParams.append("sig", sig);
+
+          document.getElementById("output").value = u.toString();
+        } catch (err) {
+          console.error(err);
+          alert("Invalid URL or unexpected error.");
+        }
+      });
+    </script>
+  </body>
+</html>
