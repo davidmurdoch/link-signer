@@ -104,7 +104,7 @@
         const enc = new TextEncoder();
         const key = await crypto.subtle.importKey(
           "jwk",
-          enc.encode(SECRET),
+          SECRET,
           { name: "ECDSA", hash: "P-256" },
           false,
           ["sign"]
